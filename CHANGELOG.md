@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-14
+
+### Added
+- **Multi-compositor window targeting**: native backends for **KWin**
+  (KDE Plasma), **Hyprland**, **i3**, and **COSMIC** Wayland alongside
+  the existing GNOME Shell backend. Window listing, focus tracking, and
+  activation now work across all five compositors with automatic backend
+  selection at runtime.
+- **COSMIC Wayland helper** (`computer-use-linux-cosmic` binary) that
+  speaks the `zcosmic_toplevel_info_v1` and `zcosmic_toplevel_manager_v1`
+  protocols, used by the main server when running under COSMIC.
+- **`windowing/` crate-internal module** consolidating all backends behind
+  a uniform `WindowBackend` trait, with a registry that picks the right
+  backend per session.
+- **Datagram ydotool socket support** in addition to the existing stream
+  sockets. Aligns with `ydotoold`'s newer default and avoids a
+  reconnection penalty per input event.
+- **Raw-keycode keyboard input** path for ydotool, fixing keystroke
+  delivery on layouts where the symbolic keysym path was unreliable.
+- **Compact Linux accessibility trees** in `get_app_state` — deduplicated
+  redundant container nodes for smaller, more focused snapshots.
+- **Enriched AT-SPI state readback** — element states (`focused`,
+  `selected`, `expanded`, `checked`, …) now flow through to the response
+  schema for `get_app_state`.
+
+### Changed
+- Server-side rejection of empty window-backend results (returns a
+  structured "no backend available" error instead of an empty list).
+- Stale-client eviction in the chrome-extension host path on backend
+  side (host binary itself not shipped here — see Removed).
+
+### Removed
+- **`codex-chrome-extension-host` binary** is intentionally not shipped
+  in this fork — it is a Chrome native messaging host scoped to Codex
+  browser automation (`com.openai.codexextension`), unrelated to the
+  computer-use MCP. The cosmic helper binary is renamed to
+  `computer-use-linux-cosmic` to match the project naming.
+
+### Synced from upstream
+- This release tracks
+  [`ilysenko/codex-desktop-linux`](https://github.com/ilysenko/codex-desktop-linux)
+  through commit `4d6fd96` (May 2026), then re-applies the rebrand
+  (DBus names, env vars, GNOME extension UUID, cache-file prefixes).
+  Upstream credit goes to ilysenko, mosesmrima, PinguuSS, and the
+  original Codex contributors.
+
 ## [0.1.0] - 2026-05-13
 
 ### Added
@@ -40,5 +86,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Validated against GNOME 50.1 on Wayland (Ubuntu 25.10).
 - KDE / Sway / Hyprland untested — see README support matrix.
 
-[Unreleased]: https://github.com/avifenesh/computer-use-linux/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/avifenesh/computer-use-linux/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/avifenesh/computer-use-linux/releases/tag/v0.2.0
 [0.1.0]: https://github.com/avifenesh/computer-use-linux/releases/tag/v0.1.0

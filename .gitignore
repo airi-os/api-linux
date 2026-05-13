@@ -18,3 +18,4 @@ Cargo.lock.bak
 
 # Screenshot scratch
 /tmp-screenshots/
+dist/

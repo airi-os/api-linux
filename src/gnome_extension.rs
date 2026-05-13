@@ -1,5 +1,6 @@
 use crate::diagnostics::hydrate_session_bus_env;
-use crate::windows::{list_extension_windows, window_permission_hint, WindowInfo};
+use crate::windowing::backends::gnome::list_extension_windows;
+use crate::windows::{window_permission_hint, WindowInfo};
 use schemars::JsonSchema;
 use serde::Serialize;
 use std::{
@@ -63,15 +64,15 @@ pub async fn setup_window_targeting_report() -> WindowTargetingSetupReport {
 
     let requires_shell_reload = windows_error.is_some();
     let message = if !wrote_files {
-        "Could not install the Linux Computer Use GNOME Shell extension files.".to_string()
+        "Could not install the computer-use-linux GNOME Shell extension files.".to_string()
     } else if !enable_command.ok {
-        "Linux Computer Use GNOME Shell extension files were installed, but enabling the extension failed. Enable it with gnome-extensions after GNOME Shell sees the new extension."
+        "computer-use-linux GNOME Shell extension files were installed, but enabling the extension failed. Enable it with gnome-extensions after GNOME Shell sees the new extension."
             .to_string()
     } else if windows_error.is_none() {
-        "Linux Computer Use GNOME Shell extension is active and window targeting is available."
+        "computer-use-linux GNOME Shell extension is active and window targeting is available."
             .to_string()
     } else {
-        "Linux Computer Use GNOME Shell extension files were installed and enable was requested, but GNOME Shell is not serving the window-control DBus API yet. Log out and back in, then retry setup_window_targeting."
+        "computer-use-linux GNOME Shell extension files were installed and enable was requested, but GNOME Shell is not serving the window-control DBus API yet. Log out and back in, then retry setup_window_targeting."
             .to_string()
     };
 

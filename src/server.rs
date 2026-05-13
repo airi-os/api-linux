@@ -9,13 +9,12 @@ use crate::remote_desktop::{
     click as portal_click, drag as portal_drag, scroll as portal_scroll,
     start_portal_pointer_session, PointerButton, PortalPointerSession, ScrollDirection,
 };
-use crate::screenshot::{
-    capture_screenshot, capture_screenshot_area, ScreenshotArea, ScreenshotCapture,
-};
+use crate::screenshot::{capture_screenshot, ScreenshotCapture};
+use crate::windowing::registry;
 use crate::windows::{
     focus_window_target, focused_window, list_windows, resolve_window_target,
     window_permission_hint, WindowFocusResult, WindowInfo, WindowTarget,
-    GNOME_SHELL_EXTENSION_BACKEND, GNOME_SHELL_INTROSPECT_BACKEND,
+    GNOME_SHELL_INTROSPECT_BACKEND,
 };
 use anyhow::Result;
 use rmcp::{
@@ -26,8 +25,10 @@ use rmcp::{
 use serde::{Deserialize, Serialize};
 use std::{
     env,
+    io::Write,
+    os::unix::net::{UnixDatagram, UnixStream},
     path::PathBuf,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -105,7 +106,7 @@ impl ComputerUseLinux {
                     error: None,
                     permissions_hint: None,
                     message:
-                        "Focused window query completed through the available GNOME window backend."
+                        "Focused window query completed through the available compositor window backend."
                             .to_string(),
                 })
             }
@@ -177,6 +178,14 @@ impl ComputerUseLinux {
         let app_filter = self
             .resolve_accessibility_app_filter(&params, window_context.as_ref())
             .await;
+        let (screenshot, screenshot_error) = if include_screenshot {
+            match capture_screenshot().await {
+                Ok(capture) => (Some(capture), None),
+                Err(error) => (None, Some(error.to_string())),
+            }
+        } else {
+            (None, None)
+        };
         let (accessibility_tree, accessibility_tree_raw_count, accessibility_error) =
             if diagnostics.readiness.can_build_accessibility_tree {
                 let target_pid = window_context.as_ref().and_then(|window| window.pid);
@@ -200,33 +209,15 @@ impl ComputerUseLinux {
         if accessibility_error.is_none() {
             self.cache_nodes(&accessibility_tree);
         }
-        let (screenshot, screenshot_error) = if include_screenshot {
-            match self
-                .capture_requested_screenshot(&params, window_context.as_ref(), &accessibility_tree)
-                .await
-            {
-                Ok(capture) => (Some(capture), None),
-                Err(error) => (None, Some(error)),
-            }
-        } else {
-            (None, None)
-        };
         let mut message = if let Some(error) = &accessibility_error {
             format!("MCP registration is working, but AT-SPI tree extraction failed: {error}")
         } else if let Some(capture) = &screenshot {
-            let mut message = format!(
+            format!(
                 "MCP registration, screenshot capture, and AT-SPI tree extraction are working. Captured {} accessibility nodes (compacted from {}) and a screenshot through {}.",
                 accessibility_tree.len(),
                 accessibility_tree_raw_count,
                 capture.source
-            );
-            if let Some(region) = capture.region {
-                message.push_str(&format!(
-                    " Screenshot was scoped to x={}, y={}, width={}, height={}.",
-                    region.x, region.y, region.width, region.height
-                ));
-            }
-            message
+            )
         } else if let Some(error) = &screenshot_error {
             format!(
                 "MCP registration and AT-SPI tree extraction are working. Captured {} accessibility nodes (compacted from {}). Screenshot capture failed: {error}",
@@ -487,6 +478,7 @@ impl ComputerUseLinux {
                 });
             }
         };
+
         if let Some(session) = self.cached_portal_pointer_session() {
             match portal_scroll(&session, target_point, direction, units).await {
                 Ok(()) => {
@@ -669,8 +661,7 @@ impl ComputerUseLinux {
                 });
             }
         };
-        let result = run_ydotool(&["type".to_string(), "--".to_string(), params.text])
-            .map(|output| vec![output]);
+        let result = run_ydotool_type_text(&params.text).map(|output| vec![output]);
         Json(action_result_with_focus(
             "type_text",
             result,
@@ -683,7 +674,7 @@ impl ComputerUseLinux {
 #[tool_handler(
     name = "computer-use-linux",
     version = "0.1.0",
-    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture full screenshots through GNOME Shell or XDG Desktop Portal, and scoped screenshots through GNOME Shell when get_app_state includes screenshot_scope=app/window/region/element. Use screenshot_region for rectangular app pieces and screenshot_element_index or screenshot_element_role/name/text/states for a specific accessibility node. It can read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus GNOME Shell windows when org.gnome.Shell.Introspect or the Linux Computer Use GNOME Shell extension permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available or through ydotool otherwise. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
+    instructions = "Begin every turn that uses Computer Use by calling get_app_state. If diagnostics report disabled GNOME accessibility, call setup_accessibility before asking the user to retry. Use list_windows/focused_window before targeted keyboard input. If diagnostics report windowing.can_list_windows=false on GNOME, call setup_window_targeting to install the optional GNOME Shell extension backend, then ask the user to log out and back in if the setup report says a shell reload is required. This Linux backend can capture screenshots through GNOME Shell or XDG Desktop Portal, read AT-SPI trees with action/value metadata, invoke native AT-SPI actions, set AT-SPI values or editable text, list/focus compositor windows through registered Linux window backends when the session permits it, attach best-effort terminal tty/process metadata to terminal windows, and send coordinate or element-targeted click/scroll/drag input through the Wayland remote desktop portal when available or through ydotool otherwise. For element-targeted actions, prefer element_index from the latest get_app_state result; click, perform_action, and set_value can also use semantic role/name/text/states selectors when the target is unique. type_text and press_key accept optional window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd selectors and refuse targeted input if focus cannot be verified."
 )]
 impl ServerHandler for ComputerUseLinux {}
 
@@ -778,7 +769,7 @@ struct AppCandidate {
     command: String,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 struct GetAppStateParams {
     #[serde(default)]
     app_name_or_bundle_identifier: Option<String>,
@@ -806,20 +797,6 @@ struct GetAppStateParams {
     max_depth: Option<u32>,
     #[serde(default)]
     include_screenshot: Option<bool>,
-    #[serde(default)]
-    screenshot_scope: Option<ScreenshotScope>,
-    #[serde(default)]
-    screenshot_region: Option<ScreenshotRegionParams>,
-    #[serde(default)]
-    screenshot_element_index: Option<u32>,
-    #[serde(default)]
-    screenshot_element_role: Option<String>,
-    #[serde(default)]
-    screenshot_element_name: Option<String>,
-    #[serde(default)]
-    screenshot_element_text: Option<String>,
-    #[serde(default)]
-    screenshot_element_states: Vec<String>,
 }
 
 impl GetAppStateParams {
@@ -836,73 +813,6 @@ impl GetAppStateParams {
             title: self.title.clone(),
         }
     }
-
-    fn screenshot_scope(&self) -> ScreenshotScope {
-        if self.screenshot_region.is_some() {
-            ScreenshotScope::Region
-        } else if self.requests_screenshot_element() {
-            ScreenshotScope::Element
-        } else {
-            self.screenshot_scope.unwrap_or_default()
-        }
-    }
-
-    fn requests_screenshot_element(&self) -> bool {
-        self.screenshot_element_index.is_some()
-            || self
-                .screenshot_element_role
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-            || self
-                .screenshot_element_name
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-            || self
-                .screenshot_element_text
-                .as_deref()
-                .is_some_and(|value| !value.trim().is_empty())
-            || self
-                .screenshot_element_states
-                .iter()
-                .any(|value| !value.trim().is_empty())
-    }
-
-    fn screenshot_element_selector(&self) -> ElementSelector<'_> {
-        ElementSelector {
-            role: self.screenshot_element_role.as_deref(),
-            name: self.screenshot_element_name.as_deref(),
-            text: self.screenshot_element_text.as_deref(),
-            states: &self.screenshot_element_states,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum ScreenshotScope {
-    #[default]
-    Full,
-    App,
-    Window,
-    Region,
-    Element,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-struct ScreenshotRegionParams {
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    #[serde(default)]
-    coordinate_space: Option<ScreenshotCoordinateSpace>,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum ScreenshotCoordinateSpace {
-    Screen,
-    Window,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -1205,22 +1115,6 @@ impl ComputerUseLinux {
         candidates.into_iter().next()
     }
 
-    async fn capture_requested_screenshot(
-        &self,
-        params: &GetAppStateParams,
-        window_context: Option<&WindowInfo>,
-        accessibility_tree: &[AccessibilityNode],
-    ) -> std::result::Result<ScreenshotCapture, String> {
-        match resolve_requested_screenshot_area(params, window_context, accessibility_tree)? {
-            Some(area) => capture_screenshot_area(area)
-                .await
-                .map_err(|error| format!("{error:#}")),
-            None => capture_screenshot()
-                .await
-                .map_err(|error| format!("{error:#}")),
-        }
-    }
-
     async fn focus_target_for_input(
         &self,
         target: &WindowTarget,
@@ -1452,7 +1346,6 @@ enum ElementResolvePurpose {
     Click,
     Action,
     SetValue,
-    Screenshot,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -1572,9 +1465,6 @@ fn node_matches_resolve_purpose(node: &AccessibilityNode, purpose: ElementResolv
         }
         ElementResolvePurpose::Action => !node.actions.is_empty(),
         ElementResolvePurpose::SetValue => node.supports_editable_text || node.value.is_some(),
-        ElementResolvePurpose::Screenshot => {
-            bounds_to_screenshot_area(node.bounds.as_ref()).is_some()
-        }
     }
 }
 
@@ -1657,178 +1547,6 @@ fn is_plain_left_click(button: Option<&str>, click_count: Option<u32>) -> bool {
 
 fn primary_action_name(actions: &[AccessibilityAction]) -> Option<String> {
     actions.first().map(|action| action.name.clone())
-}
-
-fn resolve_requested_screenshot_area(
-    params: &GetAppStateParams,
-    window_context: Option<&WindowInfo>,
-    accessibility_tree: &[AccessibilityNode],
-) -> std::result::Result<Option<ScreenshotArea>, String> {
-    match params.screenshot_scope() {
-        ScreenshotScope::Full => Ok(None),
-        ScreenshotScope::App => {
-            resolve_app_screenshot_area(window_context, accessibility_tree).map(Some)
-        }
-        ScreenshotScope::Window => window_screenshot_area(window_context).map(Some),
-        ScreenshotScope::Region => {
-            let region = params.screenshot_region.as_ref().ok_or_else(|| {
-                "Pass screenshot_region when screenshot_scope is region.".to_string()
-            })?;
-            region_screenshot_area(region, window_context).map(Some)
-        }
-        ScreenshotScope::Element => element_screenshot_area(params, accessibility_tree).map(Some),
-    }
-}
-
-fn resolve_app_screenshot_area(
-    window_context: Option<&WindowInfo>,
-    accessibility_tree: &[AccessibilityNode],
-) -> std::result::Result<ScreenshotArea, String> {
-    if let Some(window) = window_context {
-        return window_bounds_to_screenshot_area(window);
-    }
-
-    accessibility_tree
-        .iter()
-        .find_map(|node| bounds_to_screenshot_area(node.bounds.as_ref()))
-        .ok_or_else(|| {
-            "Could not scope screenshot to an app: pass a window target with bounds or choose an accessibility node with positive bounds."
-                .to_string()
-        })
-}
-
-fn window_screenshot_area(
-    window_context: Option<&WindowInfo>,
-) -> std::result::Result<ScreenshotArea, String> {
-    let window = window_context.ok_or_else(|| {
-        "Pass window_id, pid, app_id, wm_class, title, tty, terminal_pid, terminal_command, or terminal_cwd when screenshot_scope is window."
-            .to_string()
-    })?;
-    window_bounds_to_screenshot_area(window)
-}
-
-fn window_bounds_to_screenshot_area(
-    window: &WindowInfo,
-) -> std::result::Result<ScreenshotArea, String> {
-    let bounds = window.bounds.as_ref().ok_or_else(|| {
-        format!(
-            "Window {} has no compositor bounds; cannot scope screenshot to this window.",
-            window.window_id
-        )
-    })?;
-    let x = bounds.x.ok_or_else(|| {
-        format!(
-            "Window {} has no compositor x coordinate; cannot scope screenshot to this window.",
-            window.window_id
-        )
-    })?;
-    let y = bounds.y.ok_or_else(|| {
-        format!(
-            "Window {} has no compositor y coordinate; cannot scope screenshot to this window.",
-            window.window_id
-        )
-    })?;
-    validate_screenshot_area(ScreenshotArea {
-        x,
-        y,
-        width: bounds.width,
-        height: bounds.height,
-    })
-}
-
-fn region_screenshot_area(
-    region: &ScreenshotRegionParams,
-    window_context: Option<&WindowInfo>,
-) -> std::result::Result<ScreenshotArea, String> {
-    let area = ScreenshotArea {
-        x: region.x,
-        y: region.y,
-        width: region.width,
-        height: region.height,
-    };
-    let coordinate_space = region.coordinate_space.unwrap_or_else(|| {
-        if window_context.is_some() {
-            ScreenshotCoordinateSpace::Window
-        } else {
-            ScreenshotCoordinateSpace::Screen
-        }
-    });
-
-    match coordinate_space {
-        ScreenshotCoordinateSpace::Screen => validate_screenshot_area(area),
-        ScreenshotCoordinateSpace::Window => {
-            let window_area = window_screenshot_area(window_context)?;
-            let x = window_area
-                .x
-                .checked_add(area.x)
-                .ok_or_else(|| "Window-relative screenshot x coordinate overflowed.".to_string())?;
-            let y = window_area
-                .y
-                .checked_add(area.y)
-                .ok_or_else(|| "Window-relative screenshot y coordinate overflowed.".to_string())?;
-            validate_screenshot_area(ScreenshotArea { x, y, ..area })
-        }
-    }
-}
-
-fn element_screenshot_area(
-    params: &GetAppStateParams,
-    accessibility_tree: &[AccessibilityNode],
-) -> std::result::Result<ScreenshotArea, String> {
-    let node = if let Some(index) = params.screenshot_element_index {
-        accessibility_tree
-            .iter()
-            .find(|node| node.index == index)
-            .cloned()
-            .ok_or_else(|| {
-                format!(
-                    "No accessibility node matched screenshot_element_index {index}; call get_app_state with enough max_nodes/max_depth or use a semantic screenshot element selector."
-                )
-            })?
-    } else {
-        let selector = params.screenshot_element_selector();
-        if selector.is_empty() {
-            return Err(
-                "Pass screenshot_element_index or screenshot_element_role/name/text/states when screenshot_scope is element."
-                    .to_string(),
-            );
-        }
-        resolve_semantic_node(
-            accessibility_tree,
-            &selector,
-            ElementResolvePurpose::Screenshot,
-        )?
-    };
-
-    bounds_to_screenshot_area(node.bounds.as_ref()).ok_or_else(|| {
-        format!(
-            "Accessibility node {} has no positive screen bounds; cannot scope screenshot to it.",
-            node.index
-        )
-    })
-}
-
-fn bounds_to_screenshot_area(bounds: Option<&Bounds>) -> Option<ScreenshotArea> {
-    let bounds = bounds?;
-    if bounds.width <= 0 || bounds.height <= 0 {
-        return None;
-    }
-    if bounds.x <= i32::MIN / 2 || bounds.y <= i32::MIN / 2 {
-        return None;
-    }
-    let width = bounds.width.try_into().ok()?;
-    let height = bounds.height.try_into().ok()?;
-    Some(ScreenshotArea {
-        x: bounds.x,
-        y: bounds.y,
-        width,
-        height,
-    })
-}
-
-fn validate_screenshot_area(area: ScreenshotArea) -> std::result::Result<ScreenshotArea, String> {
-    area.validate().map_err(|error| format!("{error:#}"))?;
-    Ok(area)
 }
 
 fn bounds_center(bounds: &Bounds) -> Option<(i32, i32)> {
@@ -2066,11 +1784,7 @@ async fn window_list_output() -> ListWindowsOutput {
     match list_windows().await {
         Ok(windows) => {
             let backend = window_backend(windows.iter());
-            let note = if backend == GNOME_SHELL_EXTENSION_BACKEND {
-                "Window list came from the Linux Computer Use GNOME Shell extension. Terminal windows may include best-effort PTY and active-process context when the process tree is readable."
-            } else {
-                "Window list came from GNOME Shell Introspect. Terminal windows may include best-effort PTY and active-process context when the process tree is readable."
-            };
+            let note = registry::list_note(&backend);
             ListWindowsOutput {
                 backend,
                 windows,
@@ -2140,41 +1854,83 @@ fn run_ydotool(args: &[String]) -> std::result::Result<Output, String> {
 
     match command.output() {
         Ok(output) if output.status.success() => Ok(output),
-        Ok(output) => {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let detail = if stderr.is_empty() { stdout } else { stderr };
-            Err(if detail.is_empty() {
-                format!("ydotool exited with {}", output.status)
-            } else {
-                detail
-            })
+        Ok(output) => Err(ydotool_output_error(output)),
+        Err(error) => Err(format!("failed to run ydotool: {error}")),
+    }
+}
+
+fn run_ydotool_type_text(text: &str) -> std::result::Result<Output, String> {
+    let mut command = Command::new("ydotool");
+    command.args(["type", "--file", "-"]);
+    if let Some(socket) = ydotool_socket() {
+        command.env("YDOTOOL_SOCKET", socket);
+    }
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+
+    match command.spawn() {
+        Ok(mut child) => {
+            if let Some(stdin) = child.stdin.as_mut() {
+                if let Err(error) = stdin.write_all(text.as_bytes()) {
+                    let _ = child.kill();
+                    return Err(format!("failed to write text to ydotool stdin: {error}"));
+                }
+            }
+            match child.wait_with_output() {
+                Ok(output) if output.status.success() => Ok(output),
+                Ok(output) => Err(ydotool_output_error(output)),
+                Err(error) => Err(format!("failed to wait for ydotool: {error}")),
+            }
         }
         Err(error) => Err(format!("failed to run ydotool: {error}")),
     }
 }
 
+fn ydotool_output_error(output: Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if stderr.is_empty() { stdout } else { stderr };
+    if detail.is_empty() {
+        format!("ydotool exited with {}", output.status)
+    } else {
+        detail
+    }
+}
+
 fn ydotool_socket() -> Option<String> {
+    connectable_ydotool_socket_from(ydotool_socket_candidates())
+        .map(|path| path.display().to_string())
+}
+
+fn ydotool_socket_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
     if let Ok(socket) = env::var("YDOTOOL_SOCKET") {
-        if !socket.trim().is_empty() {
-            return Some(socket);
+        let socket = socket.trim();
+        if !socket.is_empty() {
+            candidates.push(PathBuf::from(socket));
         }
     }
-
-    let candidates = [
-        env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(PathBuf::from)
-            .or_else(|| user_id().map(|uid| PathBuf::from(format!("/run/user/{uid}"))))
-            .map(|runtime| runtime.join(".ydotool_socket")),
-        Some(PathBuf::from("/tmp/.ydotool_socket")),
-    ];
-
+    if let Some(runtime) = env::var("XDG_RUNTIME_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .or_else(|| user_id().map(|uid| PathBuf::from(format!("/run/user/{uid}"))))
+    {
+        candidates.push(runtime.join(".ydotool_socket"));
+    }
+    candidates.push(PathBuf::from("/tmp/.ydotool_socket"));
     candidates
-        .into_iter()
-        .flatten()
-        .find(|path| path.exists())
-        .map(|path| path.display().to_string())
+}
+
+fn connectable_ydotool_socket_from(candidates: Vec<PathBuf>) -> Option<PathBuf> {
+    candidates.into_iter().find(ydotool_socket_connects)
+}
+
+fn ydotool_socket_connects(path: &PathBuf) -> bool {
+    UnixStream::connect(path).is_ok()
+        || UnixDatagram::unbound()
+            .and_then(|socket| socket.connect(path))
+            .is_ok()
 }
 
 fn mouse_button_code(button: Option<&str>) -> String {
@@ -2373,7 +2129,7 @@ fn looks_like_desktop_app(name: &str, command: &str) -> bool {
 mod tests {
     use super::*;
     use crate::atspi_tree::{AccessibilityAction, Bounds};
-    use crate::windows::WindowBounds;
+    use crate::windows::{WindowBounds, GNOME_SHELL_EXTENSION_BACKEND};
 
     fn node(index: u32, bounds: Option<Bounds>) -> AccessibilityNode {
         node_with_actions(index, bounds, Vec::new())
@@ -2492,180 +2248,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(object_ref, ":1.64/org/a11y/atspi/accessible/root");
-    }
-
-    #[test]
-    fn app_screenshot_scope_uses_window_bounds_when_available() {
-        let window = window_info(
-            42,
-            Some("Demo"),
-            Some("demo.desktop"),
-            Some("Demo"),
-            Some(1234),
-        );
-        let params = GetAppStateParams {
-            screenshot_scope: Some(ScreenshotScope::App),
-            ..Default::default()
-        };
-
-        let area = resolve_requested_screenshot_area(&params, Some(&window), &[])
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(
-            area,
-            ScreenshotArea {
-                x: 10,
-                y: 20,
-                width: 800,
-                height: 600,
-            }
-        );
-    }
-
-    #[test]
-    fn app_screenshot_scope_can_fall_back_to_accessibility_bounds() {
-        let params = GetAppStateParams {
-            screenshot_scope: Some(ScreenshotScope::App),
-            ..Default::default()
-        };
-        let nodes = vec![node(
-            0,
-            Some(Bounds {
-                x: 30,
-                y: 40,
-                width: 300,
-                height: 200,
-            }),
-        )];
-
-        let area = resolve_requested_screenshot_area(&params, None, &nodes)
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(
-            area,
-            ScreenshotArea {
-                x: 30,
-                y: 40,
-                width: 300,
-                height: 200,
-            }
-        );
-    }
-
-    #[test]
-    fn window_screenshot_scope_requires_window_context() {
-        let params = GetAppStateParams {
-            screenshot_scope: Some(ScreenshotScope::Window),
-            ..Default::default()
-        };
-
-        let error = resolve_requested_screenshot_area(&params, None, &[]).unwrap_err();
-
-        assert!(error.contains("when screenshot_scope is window"));
-    }
-
-    #[test]
-    fn screenshot_region_defaults_to_window_relative_when_window_is_targeted() {
-        let window = window_info(
-            42,
-            Some("Demo"),
-            Some("demo.desktop"),
-            Some("Demo"),
-            Some(1234),
-        );
-        let params = GetAppStateParams {
-            screenshot_region: Some(ScreenshotRegionParams {
-                x: 5,
-                y: 6,
-                width: 50,
-                height: 40,
-                coordinate_space: None,
-            }),
-            ..Default::default()
-        };
-
-        let area = resolve_requested_screenshot_area(&params, Some(&window), &[])
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(
-            area,
-            ScreenshotArea {
-                x: 15,
-                y: 26,
-                width: 50,
-                height: 40,
-            }
-        );
-    }
-
-    #[test]
-    fn screenshot_region_can_use_screen_coordinates() {
-        let window = window_info(
-            42,
-            Some("Demo"),
-            Some("demo.desktop"),
-            Some("Demo"),
-            Some(1234),
-        );
-        let params = GetAppStateParams {
-            screenshot_region: Some(ScreenshotRegionParams {
-                x: 5,
-                y: 6,
-                width: 50,
-                height: 40,
-                coordinate_space: Some(ScreenshotCoordinateSpace::Screen),
-            }),
-            ..Default::default()
-        };
-
-        let area = resolve_requested_screenshot_area(&params, Some(&window), &[])
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(
-            area,
-            ScreenshotArea {
-                x: 5,
-                y: 6,
-                width: 50,
-                height: 40,
-            }
-        );
-    }
-
-    #[test]
-    fn element_screenshot_scope_uses_accessibility_node_bounds() {
-        let params = GetAppStateParams {
-            screenshot_scope: Some(ScreenshotScope::Element),
-            screenshot_element_index: Some(7),
-            ..Default::default()
-        };
-        let nodes = vec![node(
-            7,
-            Some(Bounds {
-                x: 90,
-                y: 120,
-                width: 250,
-                height: 80,
-            }),
-        )];
-
-        let area = resolve_requested_screenshot_area(&params, None, &nodes)
-            .unwrap()
-            .unwrap();
-
-        assert_eq!(
-            area,
-            ScreenshotArea {
-                x: 90,
-                y: 120,
-                width: 250,
-                height: 80,
-            }
-        );
     }
 
     #[test]
@@ -3099,6 +2681,48 @@ mod tests {
             key_sequence("Super"),
             Some(vec!["125:1".to_string(), "125:0".to_string()])
         );
+    }
+
+    #[test]
+    fn ydotool_socket_selection_skips_unconnectable_candidates() {
+        let dir =
+            std::env::temp_dir().join(format!("computer-use-linux-server-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp server dir");
+        let stale_socket = dir.join("stale.sock");
+        std::fs::write(&stale_socket, b"not a socket").expect("write stale socket placeholder");
+        let usable_socket = dir.join("usable.sock");
+        let listener =
+            std::os::unix::net::UnixListener::bind(&usable_socket).expect("bind usable socket");
+
+        let selected = connectable_ydotool_socket_from(vec![stale_socket, usable_socket.clone()])
+            .expect("usable socket should be selected");
+
+        assert_eq!(selected, usable_socket);
+        drop(listener);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn ydotool_socket_selection_accepts_datagram_socket() {
+        let dir = std::env::temp_dir().join(format!(
+            "computer-use-linux-server-dgram-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp server dir");
+        let stale_socket = dir.join("stale.sock");
+        std::fs::write(&stale_socket, b"not a socket").expect("write stale socket placeholder");
+        let usable_socket = dir.join("usable.sock");
+        let datagram =
+            std::os::unix::net::UnixDatagram::bind(&usable_socket).expect("bind usable socket");
+
+        let selected = connectable_ydotool_socket_from(vec![stale_socket, usable_socket.clone()])
+            .expect("usable socket should be selected");
+
+        assert_eq!(selected, usable_socket);
+        drop(datagram);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
