@@ -182,6 +182,24 @@ The binary speaks the `rmcp` 2024-11-05 stdio protocol. Pass `mcp` as the only a
 
 The Linux build of Codex Desktop already bundles this binary as a plugin. You don't need to wire it up manually — the plugin definition lives in [`codex-desktop-linux`](https://github.com/avifenesh/codex-desktop-linux) under its `plugins/` directory and is enabled by default. To upgrade the plugin in place, replace the binary it ships with the one from this repo's release assets.
 
+### Claude Code (CLI)
+
+Use the `claude mcp add` command to register the binary as a stdio MCP server. Pick a scope:
+
+- `--scope user` — available across all projects for your user.
+- `--scope project` — written to `.mcp.json` at the project root for team sharing.
+- `--scope local` (default) — only the current project, stored in `~/.claude.json`.
+
+```bash
+# User-wide install (recommended for desktop control)
+claude mcp add --scope user computer-use-linux -- computer-use-linux mcp
+
+# Verify the server is registered and reachable
+claude mcp list
+```
+
+If `computer-use-linux` is not on `PATH`, pass the absolute path (e.g. `~/.local/bin/computer-use-linux`). Inside a Claude Code session, run `/mcp` to confirm the 15 tools are loaded.
+
 ### Claude Desktop
 
 Edit `~/.config/Claude/claude_desktop_config.json`:
