@@ -1,7 +1,7 @@
 # computer-use-linux
 
-NPM wrapper for the `computer-use-linux` MCP server. Current release:
-[`@agent-sh/computer-use-linux@0.2.1`](https://www.npmjs.com/package/@agent-sh/computer-use-linux/v/0.2.1).
+NPM wrapper for the `computer-use-linux` MCP server, published as
+[`@agent-sh/computer-use-linux`](https://www.npmjs.com/package/@agent-sh/computer-use-linux).
 
 Security note: this server can control the local Linux desktop. Tools such as
 `click`, `type_text`, `press_key`, `perform_action`, and `set_value` are
@@ -10,7 +10,7 @@ mutating and can change real application state. The MCP tool list includes
 desktop actions.
 
 ```bash
-npm install -g @agent-sh/computer-use-linux@0.2.1
+npm install -g @agent-sh/computer-use-linux
 computer-use-linux doctor
 hermes skills tap add agent-sh/computer-use-linux
 hermes skills install agent-sh/computer-use-linux/computer-use-linux

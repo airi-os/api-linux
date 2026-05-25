@@ -26,14 +26,14 @@ Do not use this for remote browsers, websites, or headless automation when a bro
 Preferred install for Hermes users:
 
 ```bash
-npm install -g @agent-sh/computer-use-linux@0.2.1
+npm install -g @agent-sh/computer-use-linux
 computer-use-linux doctor | jq .readiness
 ```
 
 Rust users can install the same server from crates.io:
 
 ```bash
-cargo install computer-use-linux --version 0.2.1
+cargo install computer-use-linux
 computer-use-linux doctor | jq .readiness
 ```
 

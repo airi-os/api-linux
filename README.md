@@ -16,7 +16,7 @@ npm install -g @agent-sh/computer-use-linux
 computer-use-linux doctor | jq .readiness
 ```
 
-Current release: [`v0.2.3`](https://github.com/agent-sh/computer-use-linux/releases/tag/v0.2.3). The Rust crate is published as [`computer-use-linux`](https://crates.io/crates/computer-use-linux), and the npm wrapper is published as [`@agent-sh/computer-use-linux`](https://www.npmjs.com/package/@agent-sh/computer-use-linux).
+The Rust crate is published as [`computer-use-linux`](https://crates.io/crates/computer-use-linux) and the npm wrapper as [`@agent-sh/computer-use-linux`](https://www.npmjs.com/package/@agent-sh/computer-use-linux). Prebuilt binaries ship with the [latest release](https://github.com/agent-sh/computer-use-linux/releases/latest).
 
 ## What this is
 
@@ -33,7 +33,7 @@ The crate was extracted from [`codex-desktop-linux`](https://github.com/avifenes
 
 ## Features
 
-15 MCP tools exposed by the current `v0.2.1` server:
+MCP tools exposed by the server:
 
 **Diagnostics**
 - `doctor` — single-shot JSON readiness report (platform, portals, accessibility, windowing, input, readiness summary)
@@ -124,7 +124,7 @@ computer-use-linux doctor | jq .readiness
 Installs the Rust binaries from crates.io. You still handle the system-level pieces yourself: `ydotoold`, AT-SPI, desktop portals, and the GNOME extension if you need the GNOME Wayland exact-focus backend.
 
 ```bash
-cargo install computer-use-linux --version 0.2.1
+cargo install computer-use-linux
 computer-use-linux doctor
 ```
 
@@ -148,7 +148,7 @@ computer-use-linux setup-window-targeting     # GNOME Shell extension
 Good for users who already have Node.js and want a no-Rust install. The npm package downloads and verifies the matching main and COSMIC helper binaries during install, then the wrapper sets `COMPUTER_USE_LINUX_COSMIC_HELPER` to the bundled helper automatically.
 
 ```bash
-npm install -g @agent-sh/computer-use-linux@0.2.1
+npm install -g @agent-sh/computer-use-linux
 computer-use-linux doctor
 ```
 
@@ -158,15 +158,15 @@ You will still need `ydotoold` running and AT-SPI enabled (run `computer-use-lin
 
 Linux x86_64 / aarch64 builds are published with each tag. Each binary ships a `.sha256` next to it.
 
-- Release: <https://github.com/agent-sh/computer-use-linux/releases/tag/v0.2.1>
+- Latest release: <https://github.com/agent-sh/computer-use-linux/releases/latest>
 
 ```bash
 target=x86_64-unknown-linux-gnu
-version=v0.2.1
+base=https://github.com/agent-sh/computer-use-linux/releases/latest/download
 for binary in computer-use-linux computer-use-linux-cosmic; do
   asset="$binary-$target"
-  curl -L -O "https://github.com/agent-sh/computer-use-linux/releases/download/$version/$asset"
-  curl -L -O "https://github.com/agent-sh/computer-use-linux/releases/download/$version/$asset.sha256"
+  curl -L -O "$base/$asset"
+  curl -L -O "$base/$asset.sha256"
   sha256sum -c "$asset.sha256"
   install -m 0755 "$asset" "$HOME/.local/bin/$binary"
 done
