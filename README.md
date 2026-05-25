@@ -36,7 +36,7 @@ The crate was extracted from [`codex-desktop-linux`](https://github.com/avifenes
 MCP tools exposed by the server:
 
 **Diagnostics**
-- `doctor` — single-shot JSON readiness report (platform, portals, accessibility, windowing, input, readiness summary)
+- `doctor` — single-shot JSON readiness report (platform, portals, accessibility, windowing, input, readiness summary, and a capability map of available backends)
 - `setup_accessibility` — enables GNOME's `org.gnome.desktop.interface toolkit-accessibility` setting so toolkit apps expose AT-SPI trees
 - `setup_window_targeting` — installs and enables the bundled GNOME Shell extension when `org.gnome.Shell.Introspect` is locked down
 
@@ -45,6 +45,7 @@ MCP tools exposed by the server:
 - `list_windows` — compositor windows with title, app id, wm_class, focus state, client type (Wayland/X11), and bounds
 - `focused_window` — the window currently holding keyboard focus
 - `get_app_state` — combined screenshot + accessibility tree for a chosen app, with element indices that the input tools accept
+- `screenshot` — capture the screen as a PNG; can target a window, which is raised to the front and cropped to just that window
 
 **Input**
 - `click` — by element index, semantic selector, or pixel coordinates
@@ -68,7 +69,7 @@ MCP tools exposed by the server:
 | --- | --- | --- |
 | Read-only observation | `doctor`, `list_apps`, `list_windows`, `focused_window`, `get_app_state` | `readOnlyHint=true`; may reveal app, window, accessibility, and screenshot contents. `get_app_state` may trigger the desktop screenshot portal prompt. |
 | Local setup mutators | `setup_accessibility`, `setup_window_targeting` | `readOnlyHint=false`, `destructiveHint=false`, `idempotentHint=true`; modifies user desktop configuration by enabling accessibility or installing/enabling the GNOME window-targeting extension. |
-| UI state mutators | `activate_window`, `scroll` | `readOnlyHint=false`, `destructiveHint=false`; changes focus or scroll position in the live desktop. |
+| UI state mutators | `activate_window`, `scroll`, `screenshot` | `readOnlyHint=false`, `destructiveHint=false`; changes focus or scroll position in the live desktop, or raises a window to capture it. |
 | Desktop action mutators | `click`, `drag`, `press_key`, `type_text`, `perform_action`, `set_value` | `readOnlyHint=false`, `destructiveHint=true`, `openWorldHint=true`; can trigger arbitrary actions in whatever local application is targeted. |
 
 Annotations are safety hints, not an authorization system. MCP hosts should still ask the user before calls that could submit, delete, send, purchase, overwrite, or otherwise commit state.
@@ -198,7 +199,7 @@ claude mcp add --scope user computer-use-linux -- computer-use-linux mcp
 claude mcp list
 ```
 
-If `computer-use-linux` is not on `PATH`, pass the absolute path (e.g. `~/.local/bin/computer-use-linux`). Inside a Claude Code session, run `/mcp` to confirm the 15 tools are loaded.
+If `computer-use-linux` is not on `PATH`, pass the absolute path (e.g. `~/.local/bin/computer-use-linux`). Inside a Claude Code session, run `/mcp` to confirm the tools are loaded.
 
 ### Claude Desktop
 
@@ -215,7 +216,7 @@ Edit `~/.config/Claude/claude_desktop_config.json`:
 }
 ```
 
-Restart Claude Desktop. The 15 tools should appear in the tools list.
+Restart Claude Desktop. The tools should appear in the tools list.
 
 ### Hermes Agent
 
