@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-25
+
+Documentation-only release (no `src/` changes since 0.2.3); refreshes the
+crates.io and npm README pages.
+
+### Added
+- Documented the `screenshot` MCP tool and the `doctor` capability map, which
+  were missing from the README tool list and the MCP safety-contract table.
+- A new "Environment variables" section covering runtime overrides
+  (`CU_DISABLE_ABS_POINTER`, the `COMPUTER_USE_LINUX_FORCE_PORTAL` /
+  `FORCE_YDOTOOL` pointer and keyboard knobs) and the npm wrapper install knobs
+  (`COMPUTER_USE_LINUX_BIN`, `DOWNLOAD_BASE`, `SKIP_DOWNLOAD`, `LOCAL_*`).
+
+### Changed
+- Stopped pinning explicit versions throughout the docs (README, npm README,
+  Hermes skill). Install commands are now bare and download links use GitHub's
+  `/releases/latest` redirect, so the docs no longer drift on every release.
+- Dropped the `version` field from the Hermes skill frontmatter (optional per
+  the agentskills.io standard) so it no longer mirrors the tool version.
+- Friendlier README opening: warmer tagline and a verb-driven summary, with no
+  sections removed.
+
+### Fixed
+- `install.sh` now reads the current `doctor` readiness schema
+  (`.readiness.blockers`, empty array means ready) instead of the removed
+  `.ready` / `.checks` fields, so a fully provisioned system reports ready
+  instead of always failing the doctor step. Restored the `install.sh`
+  executable bit. (#9)
+
 ## [0.2.3] - 2026-05-22
 
 ### Added
