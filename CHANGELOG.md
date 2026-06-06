@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-06-06
+
+### Fixed
+- Screenshots now work from background processes (systemd user services,
+  non-interactive parent shells) on GNOME Wayland. The GNOME Shell DBus method
+  rejects callers that do not own an allowlisted bus name, and the XDG portal
+  cancels non-interactive requests when there is no foreground window, so both
+  prior backends failed in that context. `gnome-screenshot` is now a third
+  capture fallback that works regardless of session context, bounded by a 20s
+  timeout so a hung capture degrades to a clear error instead of blocking.
+
+### Added
+- `COMPUTER_USE_LINUX_SCREENSHOT_BACKEND` to force a single screenshot backend
+  (`gnome-shell`, `portal`, or `gnome-screenshot`), skipping the fallback chain
+  for pinned/background deployments and debugging.
+- `doctor` now probes `gnome-screenshot` and lists it under
+  `capabilities.screenshot` when present.
+
 ## [0.2.5] - 2026-06-05
 
 ### Added
