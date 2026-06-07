@@ -1,5 +1,6 @@
 <div align="center">
-  <h1>airiOS - Linux API</h1>
+  
+  # [airiOS](https://github.com/airi-os/core) - Linux API
 
 <img width="256" height="384" alt="airiOS mascot" src="https://github.com/user-attachments/assets/7ecf5dd4-e4c3-42a9-ba65-8d9eb7da1bb0" />
 
